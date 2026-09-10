@@ -31,6 +31,12 @@ export interface SampleTemplateRequirement {
   requiredUl: number;
 }
 
+export interface ReactionValidationIssue {
+  code: string;
+  message: string;
+  messageEn: string;
+}
+
 export const DEFAULT_REACTION_SYSTEM: ReactionSystem = {
   totalPerWellUl: 10,
   masterMixPerWellUl: 5,
@@ -59,18 +65,22 @@ export function reactionSetWaterPerWell(
 }
 
 export function validateReactionSystem(plan: PlanResult, system: ReactionSystem) {
-  const errors: string[] = [];
-  if (system.totalPerWellUl <= 0) errors.push("总反应体积必须大于 0 µL。");
+  const errors: ReactionValidationIssue[] = [];
+  if (system.totalPerWellUl <= 0) errors.push({ code: "total-volume", message: "总反应体积必须大于 0 µL。", messageEn: "Total reaction volume must be greater than 0 µL." });
   if (system.masterMixPerWellUl < 0 || system.templatePerWellUl < 0) {
-    errors.push("Master Mix 与模板体积不可为负数。");
+    errors.push({ code: "negative-component", message: "Master Mix 与模板体积不可为负数。", messageEn: "Master Mix and template volumes cannot be negative." });
   }
   if (system.overagePercent < 0 || system.overagePercent > 50) {
-    errors.push("配液余量建议设置为 0–50%。");
+    errors.push({ code: "overage-range", message: "配液余量建议设置为 0–50%。", messageEn: "Set preparation overage between 0% and 50%." });
   }
   for (const reactionSet of plan.reactionSets) {
     const water = reactionSetWaterPerWell(reactionSet, system);
     if (water < 0) {
-      errors.push(`${reactionSet.name} 的组分合计超过 ${system.totalPerWellUl} µL。`);
+      errors.push({
+        code: `negative-water:${reactionSet.id}`,
+        message: `${reactionSet.name} 的组分合计超过 ${system.totalPerWellUl} µL。`,
+        messageEn: `Components in ${reactionSet.name} exceed ${system.totalPerWellUl} µL.`,
+      });
     }
   }
   return errors;
@@ -81,12 +91,20 @@ export function calculateReactionRequirements(
   system: ReactionSystem,
 ) {
   const factor = 1 + system.overagePercent / 100;
+  const wellsByReactionSet = new Map<string, number>();
+  const wellsBySample = new Map<string, number>();
+  for (const plate of plan.plates) {
+    for (const well of plate.wells) {
+      if (!well.sample) continue;
+      wellsByReactionSet.set(
+        well.reactionSetId,
+        (wellsByReactionSet.get(well.reactionSetId) ?? 0) + 1,
+      );
+      wellsBySample.set(well.sampleId, (wellsBySample.get(well.sampleId) ?? 0) + 1);
+    }
+  }
   const groups: ReactionGroupRequirement[] = plan.reactionSets.map((reactionSet) => {
-    const wells = plan.plates.reduce(
-      (total, plate) =>
-        total + plate.wells.filter((well) => well.reactionSetId === reactionSet.id).length,
-      0,
-    );
+    const wells = wellsByReactionSet.get(reactionSet.id) ?? 0;
     const preparationReactions = round(wells * factor);
     const waterPerWellUl = reactionSetWaterPerWell(reactionSet, system);
     const mixDispensePerWellUl = round(system.totalPerWellUl - system.templatePerWellUl);
@@ -127,10 +145,7 @@ export function calculateReactionRequirements(
   });
 
   const samples = plan.input.samples.map((sample) => {
-    const wells = plan.plates.reduce(
-      (total, plate) => total + plate.wells.filter((well) => well.sampleId === sample.id).length,
-      0,
-    );
+    const wells = wellsBySample.get(sample.id) ?? 0;
     return {
       sample: sample.name,
       sampleType: sample.type,

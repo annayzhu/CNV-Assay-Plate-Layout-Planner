@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  applyWellOverrides,
   defaultLoadingPattern,
   formatWellId,
   findDuplicateReporters,
@@ -210,4 +211,21 @@ test("assay IDs may be blank", () => {
     reference: { name: "RNase P", assayId: "", reporter: "VIC", volumeUl: 0.5 },
   }));
   assert.equal(plan.occupiedWells, 16);
+});
+
+test("manual well overrides are applied without mutating the generated base plan", () => {
+  const base = planCnvLayout(baseInput());
+  const original = base.plates[0].wells[0];
+  const edited = applyWellOverrides(base, [{
+    plateNumber: 1,
+    wellId: original.id,
+    sampleId: "u2",
+    reactionSetId: base.reactionSets[0].id,
+    replicate: 2,
+  }]);
+  assert.equal(base.plates[0].wells[0].sampleId, original.sampleId);
+  assert.equal(edited.plates[0].wells[0].sampleId, "u2");
+  assert.equal(edited.plates[0].wells[0].replicate, 2);
+  assert.equal(edited.plates[0].wells[0].source, "manual");
+  assert.equal(edited.manualWells, 1);
 });

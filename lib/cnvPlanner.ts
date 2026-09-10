@@ -78,10 +78,19 @@ export interface PlanResult {
   manualWells: number;
 }
 
+export interface WellOverride {
+  plateNumber: number;
+  wellId: string;
+  sampleId: string | null;
+  reactionSetId: string | null;
+  replicate: number | null;
+}
+
 export interface ValidationIssue {
   severity: "error" | "warning";
   code: string;
   message: string;
+  messageEn?: string;
   plateNumber?: number;
   wellId?: string;
 }
@@ -211,11 +220,10 @@ function assignUnit(
   replicates: number,
   row: number,
   startColumn: number,
+  columns: number,
 ) {
   for (let replicate = 1; replicate <= replicates; replicate += 1) {
-    const well = plate.wells.find(
-      (candidate) => candidate.row === row && candidate.column === startColumn + replicate - 1,
-    );
+    const well = plate.wells[row * columns + startColumn + replicate - 1];
     if (!well) throw new Error("Internal plate allocation error.");
     Object.assign(well, {
       sampleId: unit.sample.id,
@@ -303,13 +311,13 @@ export function planCnvLayout(input: PlanInput): PlanResult {
       if (!slot) {
         throw new Error("每板对照占用空间超过板容量，请减少对照/复孔数。 / Per-plate controls exceed capacity.");
       }
-      assignUnit(plate, unit, input.replicates, slot.row, slot.column);
+      assignUnit(plate, unit, input.replicates, slot.row, slot.column, columns);
     }
 
     while (unknownIndex < unknownUnits.length) {
       const slot = cursor.next(input.replicates);
       if (!slot) break;
-      assignUnit(plate, unknownUnits[unknownIndex], input.replicates, slot.row, slot.column);
+      assignUnit(plate, unknownUnits[unknownIndex], input.replicates, slot.row, slot.column, columns);
       unknownIndex += 1;
     }
 
@@ -321,15 +329,70 @@ export function planCnvLayout(input: PlanInput): PlanResult {
 }
 
 export function refreshPlan(plan: PlanResult): PlanResult {
-  const occupiedWells = plan.plates.reduce(
-    (total, plate) => total + plate.wells.filter((well) => well.sample).length,
-    0,
-  );
-  const manualWells = plan.plates.reduce(
-    (total, plate) => total + plate.wells.filter((well) => well.source === "manual").length,
-    0,
-  );
+  let occupiedWells = 0;
+  let manualWells = 0;
+  for (const plate of plan.plates) {
+    for (const well of plate.wells) {
+      if (well.sample) occupiedWells += 1;
+      if (well.source === "manual") manualWells += 1;
+    }
+  }
   return { ...plan, occupiedWells, manualWells };
+}
+
+export function applyWellOverrides(plan: PlanResult, overrides: WellOverride[]) {
+  if (overrides.length === 0) return plan;
+
+  const overridesByPlate = new Map<number, Map<string, WellOverride>>();
+  for (const override of overrides) {
+    const plateOverrides = overridesByPlate.get(override.plateNumber) ?? new Map<string, WellOverride>();
+    plateOverrides.set(override.wellId, override);
+    overridesByPlate.set(override.plateNumber, plateOverrides);
+  }
+
+  const samplesById = new Map(plan.input.samples.map((sample) => [sample.id, sample]));
+  const reactionSetsById = new Map(plan.reactionSets.map((set) => [set.id, set]));
+  const plates = plan.plates.map((plate) => {
+    const plateOverrides = overridesByPlate.get(plate.plateNumber);
+    if (!plateOverrides) return plate;
+    const wells = plate.wells.map((well) => {
+      const override = plateOverrides.get(well.id);
+      if (!override) return well;
+      const sample = override.sampleId ? samplesById.get(override.sampleId) : undefined;
+      const reactionSet = override.reactionSetId
+        ? reactionSetsById.get(override.reactionSetId)
+        : undefined;
+      if (!sample || !reactionSet || override.replicate === null) {
+        return {
+          ...well,
+          sampleId: "",
+          sample: "",
+          sampleType: "" as const,
+          reactionSetId: "",
+          reactionSet: "",
+          replicate: null,
+          targets: [],
+          reference: "",
+          source: "manual" as const,
+        };
+      }
+      return {
+        ...well,
+        sampleId: sample.id,
+        sample: sample.name,
+        sampleType: sample.type,
+        reactionSetId: reactionSet.id,
+        reactionSet: reactionSet.name,
+        replicate: override.replicate,
+        targets: reactionSet.targets.map((target) => target.name),
+        reference: reactionSet.reference.name,
+        source: "manual" as const,
+      };
+    });
+    return { ...plate, wells };
+  });
+
+  return refreshPlan({ ...plan, plates });
 }
 
 export function validatePlan(plan: PlanResult): ValidationIssue[] {
@@ -337,34 +400,39 @@ export function validatePlan(plan: PlanResult): ValidationIssue[] {
   const expectedReplicates = plan.input.replicates;
   const controls = plan.input.samples.filter((sample) => sample.type !== "unknown");
   const unknowns = plan.input.samples.filter((sample) => sample.type === "unknown");
+  const globalCounts = new Map<string, number>();
 
   for (const plate of plan.plates) {
-    const occupied = plate.wells.filter((well) => well.sample);
     const keys = new Set<string>();
-    for (const well of occupied) {
+    const plateCounts = new Map<string, number>();
+    for (const well of plate.wells) {
+      if (!well.sample) continue;
       const key = `${well.sampleId}|${well.reactionSetId}|${well.replicate}`;
       if (keys.has(key)) {
         issues.push({
           severity: "error",
           code: "duplicate-replicate",
           message: `${well.sample} / ${well.reactionSet} 出现重复复孔编号。`,
+          messageEn: `${well.sample} / ${well.reactionSet} has a duplicate replicate number.`,
           plateNumber: plate.plateNumber,
           wellId: well.id,
         });
       }
       keys.add(key);
+      const groupKey = `${well.sampleId}|${well.reactionSetId}`;
+      plateCounts.set(groupKey, (plateCounts.get(groupKey) ?? 0) + 1);
+      globalCounts.set(groupKey, (globalCounts.get(groupKey) ?? 0) + 1);
     }
 
     for (const control of controls) {
       for (const reactionSet of plan.reactionSets) {
-        const wells = occupied.filter(
-          (well) => well.sampleId === control.id && well.reactionSetId === reactionSet.id,
-        );
-        if (wells.length !== expectedReplicates) {
+        const count = plateCounts.get(`${control.id}|${reactionSet.id}`) ?? 0;
+        if (count !== expectedReplicates) {
           issues.push({
             severity: "error",
             code: "missing-control",
-            message: `${control.name} / ${reactionSet.name} 在本板应有 ${expectedReplicates} 孔，实际 ${wells.length} 孔。`,
+            message: `${control.name} / ${reactionSet.name} 在本板应有 ${expectedReplicates} 孔，实际 ${count} 孔。`,
+            messageEn: `${control.name} / ${reactionSet.name} requires ${expectedReplicates} wells on this plate; ${count} found.`,
             plateNumber: plate.plateNumber,
           });
         }
@@ -374,16 +442,13 @@ export function validatePlan(plan: PlanResult): ValidationIssue[] {
 
   for (const sample of unknowns) {
     for (const reactionSet of plan.reactionSets) {
-      const wells = plan.plates.flatMap((plate) =>
-        plate.wells.filter(
-          (well) => well.sampleId === sample.id && well.reactionSetId === reactionSet.id,
-        ),
-      );
-      if (wells.length !== expectedReplicates) {
+      const count = globalCounts.get(`${sample.id}|${reactionSet.id}`) ?? 0;
+      if (count !== expectedReplicates) {
         issues.push({
           severity: "error",
           code: "unknown-replicate-count",
-          message: `${sample.name} / ${reactionSet.name} 应有 ${expectedReplicates} 孔，实际 ${wells.length} 孔。`,
+          message: `${sample.name} / ${reactionSet.name} 应有 ${expectedReplicates} 孔，实际 ${count} 孔。`,
+          messageEn: `${sample.name} / ${reactionSet.name} requires ${expectedReplicates} wells; ${count} found.`,
         });
       }
     }
@@ -394,6 +459,7 @@ export function validatePlan(plan: PlanResult): ValidationIssue[] {
       severity: "warning",
       code: "no-calibrator",
       message: "未设置已知拷贝数校准样本。",
+      messageEn: "No known-copy-number calibrator sample is configured.",
     });
   }
   if (!controls.some((sample) => sample.type === "ntc")) {
@@ -401,6 +467,7 @@ export function validatePlan(plan: PlanResult): ValidationIssue[] {
       severity: "warning",
       code: "no-ntc",
       message: "未设置 NTC；污染/背景质控不完整。",
+      messageEn: "No NTC is configured; contamination/background control is incomplete.",
     });
   }
   if (expectedReplicates < 4) {
@@ -408,6 +475,7 @@ export function validatePlan(plan: PlanResult): ValidationIssue[] {
       severity: "warning",
       code: "replicate-recommendation",
       message: "官方 TaqMan CNV 指南建议每个 gDNA 样本 4 个复孔以获得更可靠的 copy-number call。",
+      messageEn: "The official TaqMan CNV guide recommends four replicates per gDNA sample for a more reliable copy-number call.",
     });
   }
   if (plan.manualWells > 0) {
@@ -415,6 +483,7 @@ export function validatePlan(plan: PlanResult): ValidationIssue[] {
       severity: "warning",
       code: "manual-layout",
       message: `存在 ${plan.manualWells} 个手工编辑孔；导出前需人工复核复孔完整性、同板对照和仪器样本列表。`,
+      messageEn: `${plan.manualWells} well(s) were edited manually; review replicate completeness, plate-level controls, and the instrument sample list before export.`,
     });
   }
   return issues;

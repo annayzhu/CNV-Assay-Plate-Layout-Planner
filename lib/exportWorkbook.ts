@@ -138,7 +138,7 @@ function addPlateMapSheet(
     aoa.push([
       rowLabel(row),
       ...Array.from({ length: columns }, (_, column) => {
-        const well = plate.wells.find((candidate) => candidate.row === row && candidate.column === column);
+        const well = plate.wells[row * columns + column];
         return well?.sample ? `${well.sample}\n${well.reactionSet}\nR${well.replicate}` : "";
       }),
     ]);
@@ -154,7 +154,7 @@ function addPlateMapSheet(
     sheet[rowHeader].s = HEADER_STYLE;
     for (let column = 0; column < columns; column += 1) {
       const address = XLSX.utils.encode_cell({ r: row + 2, c: column + 1 });
-      const well = plate.wells.find((candidate) => candidate.row === row && candidate.column === column);
+      const well = plate.wells[row * columns + column];
       const targetIndex = well?.targets[0]
         ? Math.max(0, plan.input.targets.findIndex((target) => target.name === well.targets[0]))
         : 0;
@@ -169,9 +169,9 @@ function addPlateMapSheet(
   XLSX.utils.book_append_sheet(workbook, sheet, `Plate Map P${String(plate.plateNumber).padStart(2, "0")}`);
 }
 
-function reporterMapping(well: PlannerWell, plan: PlanResult) {
+function reporterMapping(well: PlannerWell, reactionSetsById: Map<string, PlanResult["reactionSets"][number]>) {
   if (!well.reactionSetId) return "";
-  const set = plan.reactionSets.find((candidate) => candidate.id === well.reactionSetId);
+  const set = reactionSetsById.get(well.reactionSetId);
   if (!set) return "";
   return [
     ...set.targets.map((target) => `${target.name}=${target.reporter}`),
@@ -185,10 +185,11 @@ function addWellDetailSheet(
   plan: PlanResult,
   plate: PlannerPlate,
 ) {
+  const reactionSetsById = new Map(plan.reactionSets.map((set) => [set.id, set]));
   const header = ["Well", "Sample", "Sample Type", "Reaction Set", "Replicate", "Target(s)", "Reference", "Reporter mapping", "Source"];
   const rows = plate.wells
     .filter((well) => well.sample)
-    .map((well) => [well.id, well.sample, well.sampleType ? sampleTypeLabel(well.sampleType) : "", well.reactionSet, well.replicate ?? "", well.targets.join(" + "), well.reference, reporterMapping(well, plan), well.source]);
+    .map((well) => [well.id, well.sample, well.sampleType ? sampleTypeLabel(well.sampleType) : "", well.reactionSet, well.replicate ?? "", well.targets.join(" + "), well.reference, reporterMapping(well, reactionSetsById), well.source]);
   const sheet = XLSX.utils.aoa_to_sheet([header, ...rows]);
   sheet["!cols"] = [{ wch: 9 }, { wch: 24 }, { wch: 18 }, { wch: 38 }, { wch: 11 }, { wch: 28 }, { wch: 20 }, { wch: 52 }, { wch: 12 }];
   sheet["!autofilter"] = { ref: `A1:I${rows.length + 1}` };

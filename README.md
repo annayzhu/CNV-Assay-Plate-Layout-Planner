@@ -25,11 +25,30 @@ npm install
 npm run dev
 ```
 
+本项目是纯静态浏览器应用：不需要数据库、账号系统或服务端运行时。生产目录为 `dist/`。
+
 生产构建与测试：
 
 ```bash
 npm test
 ```
+
+代码质量检查：
+
+```bash
+npm run lint
+```
+
+## 架构
+
+- `lib/cnvPlanner.ts`：确定性排板与结构质控。
+- `lib/reactionCalculator.ts`：反应体系与批量配液计算。
+- `lib/exportWorkbook.ts`：Excel 与仪器粘贴列表导出。
+- `app/plannerDocument.ts`：唯一持久化文档及旧数据迁移。
+- `app/usePlannerController.ts`：用户操作、自动保存和派生状态。
+- `app/components/`：设置、孔板工作区、反应体系三个视图。
+
+完整的分层审查、删减理由和性能模型见 [`docs/ENGINEERING_REVIEW_CN.md`](docs/ENGINEERING_REVIEW_CN.md)。
 
 ## 科学边界
 
