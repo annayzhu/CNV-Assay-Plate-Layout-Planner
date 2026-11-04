@@ -17,6 +17,8 @@ import {
   type WellOverride,
 } from "@/lib/cnvPlanner";
 import { instrumentTsv } from "@/lib/exportWorkbook";
+import { plannerWorkflowOutput } from "@/lib/workflowOutput";
+import { isHosted, useWorkflowBridge, type WorkflowContext } from "@/app/workflow-bridge";
 import {
   calculateReactionRequirements,
   validateReactionSystem,
@@ -77,6 +79,13 @@ async function copyText(text: string) {
   textarea.remove();
 }
 
+/** A plan saved in a record, read the way a saved plan in this browser is read. */
+function restoredDocument(state: unknown): PlannerDocument {
+  const saved = state as PlannerDocument | null;
+  if (!saved?.input || !Array.isArray(saved.input.samples)) throw new Error("方案格式不兼容");
+  return restoreState({ getItem: () => JSON.stringify(createPersistedState(saved, "")) } as unknown as Storage).document;
+}
+
 export function usePlannerController() {
   const [restored] = useState(() => restoreState(typeof window === "undefined" ? null : window.localStorage));
   const [documentState, setDocumentState] = useState(restored.document);
@@ -134,6 +143,8 @@ export function usePlannerController() {
   }, [language]);
 
   useEffect(() => {
+    // Inside a record, the record keeps the plan.
+    if (isHosted()) return;
     const snapshot = JSON.stringify(documentState);
     if (snapshot === lastSavedSnapshot.current) return;
     setIsDirty(true);
@@ -157,6 +168,16 @@ export function usePlannerController() {
     const timer = window.setTimeout(() => setToast(""), 4500);
     return () => window.clearTimeout(timer);
   }, [toast]);
+
+  useWorkflowBridge(documentState, restoreFromRecord, () => plannerWorkflowOutput(plan, reactionSystem, language === "zh"));
+
+  function restoreFromRecord({ state, samples, language: recordLanguage }: WorkflowContext) {
+    const next = state ? restoredDocument(state) : createDocument(recordLanguage ?? "zh");
+    if (!state && samples?.length) next.input = { ...next.input, samples: samples.map((sample) => ({ id: sample.id, name: sample.name, type: "unknown" as const })) };
+    setDocumentState(recordLanguage ? { ...next, language: recordLanguage } : next);
+    setRequestedPlate(0);
+    setSelection(null);
+  }
 
   function updateDocument(update: (current: PlannerDocument) => PlannerDocument) {
     setDocumentState(update);
