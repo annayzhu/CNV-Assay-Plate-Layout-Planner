@@ -435,7 +435,7 @@ footer { display: flex; justify-content: space-between; gap: 20px; padding: 16px
 @media (min-width: 901px) {
   [data-labnest-hosted] .app-shell { display: flex; height: 100dvh; flex-direction: column; overflow: hidden; }
   [data-labnest-hosted] .topbar { position: absolute; top: 8px; right: 12px; z-index: 5; min-height: 0; padding: 0; border: 0; background: none; backdrop-filter: none; }
-  [data-labnest-hosted] .workspace { width: 100%; min-height: 0; flex: 1; grid-template-columns: 300px minmax(0, 1fr); }
+  [data-labnest-hosted] .workspace { width: 100%; min-height: 0; flex: 1; grid-template-columns: 350px minmax(0, 1fr); }
   [data-labnest-hosted] .sidebar { height: 100%; min-height: 0; overflow: auto; padding: 12px; background: none; }
   [data-labnest-hosted] .main-area { min-height: 0; overflow: auto; padding: 12px; }
   [data-labnest-hosted] .hero-strip { padding-right: 130px; }
