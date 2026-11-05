@@ -448,3 +448,7 @@ footer { display: flex; justify-content: space-between; gap: 20px; padding: 16px
 [data-labnest-hosted] .hero-strip:not(.empty-preview) { display: none; }
 [data-labnest-hosted] .mix-group { overflow-x: auto; }
 [data-labnest-hosted] .copy-helper { display: none; }
+[data-labnest-hosted] .reaction-mix-groups { grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 901px) {
+  [data-labnest-hosted] .reaction-heading { padding-right: 112px; }
+}
