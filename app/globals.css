@@ -442,3 +442,9 @@ footer { display: flex; justify-content: space-between; gap: 20px; padding: 16px
   [data-labnest-hosted] .layout-workbench { grid-template-columns: minmax(0, 1fr) 280px; gap: 12px; }
   [data-labnest-hosted] .reaction-panel { position: static; overflow: visible; max-height: none; padding: 12px; }
 }
+@media (min-width: 901px) {
+  [data-labnest-hosted] .layout-workbench { grid-template-columns: minmax(0, 1fr) 330px; }
+}
+[data-labnest-hosted] .hero-strip:not(.empty-preview) { display: none; }
+[data-labnest-hosted] .mix-group { overflow-x: auto; }
+[data-labnest-hosted] .copy-helper { display: none; }
